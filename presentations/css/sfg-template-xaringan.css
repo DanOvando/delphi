@@ -1,0 +1,266 @@
+/*------------------------------*/
+/* Section 1: Fonts and General */
+/*------------------------------*/
+/* Import fonts */
+@import url(https://fonts.googleapis.com/css?family=Yanone+Kaffeesatz);
+@import url(https://fonts.googleapis.com/css?family=Droid+Serif:400,700,400italic);
+@import url(https://fonts.googleapis.com/css?family=Source+Code+Pro:400,700);
+
+/* Set fonts for body text and headers */
+body { font-family: 'Helvetica', 'Droid Serif', 'Palatino Linotype', 'Book Antiqua', Palatino, 'Microsoft YaHei', 'Songti SC', serif; }
+h1, h2, h3 {
+  font-family: 'Helvetica', 'Droid Serif', 'Palatino Linotype', 'Book Antiqua', Palatino, 'Microsoft YaHei', 'Songti SC', serif;
+  font-weight: normal;
+}
+.remark-code, .remark-inline-code { font-family: 'Source Code Pro', 'Lucida Console', Monaco, monospace; }
+
+/* Slide number position */
+.remark-slide-number {
+  font-size: 10pt;
+  margin-bottom: 10px;
+  margin-right: 90%;
+  opacity: 0.7; /* default: 0.5 */
+}
+
+body {
+  margin:0;
+  padding:0;
+}
+
+.title-slide {
+  background-image: url(https://upload.wikimedia.org/wikipedia/commons/3/39/Naruto_Shiki_Fujin.svg);
+  background-size: cover;
+}
+.title-slide h1 {
+  color: #F7F8FA;
+}
+.title-slide h2, .title-slide h3 {
+  color: #e7e8e2; 
+  line-height: 1.5em;
+}
+
+/*-------------------------------*/
+/* Title Slide with Dark Overlay */
+/*-------------------------------*/
+
+.title-slide-dark {
+  background-repeat: no-repeat;
+  background-size: 100%;
+  background-color: #272822; /* background color */
+  color: #d6d6d6; /* text color */
+  vertical-align:middle;
+  text-align:center;
+}
+.title-slide-dark .remark-slide-number {
+  display: none;
+}
+.title-slide-dark div{
+  margin:0;
+  padding:0;
+  border:0;
+}
+.title-slide-dark h1, .title-slide-dark h2, .title-slide-dark h3, .title-slide-dark h4, .title-slide-dark p {
+  display: block;
+  color: white;
+  background: rgb(0, 0, 0); /* black background for browsers that don't support opacity */
+  background: rgba(0,0,0,0.7); /* semi-transparent black background for browsers that do support opacity */
+  position: relative;
+  left: -12%;
+  width: 112%;
+  margin:0em 0em 0em 0em;
+  border:0;
+  padding:10px 50px;
+}
+.title-slide-dark #title-footer {
+    color: white; 
+    background: rgb(0,0,0); /* black background for browsers that don't support opacity */
+    background: rgba(0,0,0,0.7); /* semi-transparent black background for browsers that do support opacity */
+    position: absolute; 
+    top: 88%; /* top of footer starts 80% of way down slide */
+    bottom: 100%; /* top of footer starts 80% of way down slide */
+    left: 0; /* left of footer starts on the left side of slide */
+    margin:0px;
+    padding:15px;
+    width:100%;
+    height:100%;
+    text-align:center;
+}
+
+.title-slide-dark img {
+    height: 8%;
+    margin: 0px 15px;
+    float:center;
+}
+
+/*--------------------------------*/
+/* Title Slide with White Overlay */
+/*--------------------------------*/
+
+.title-slide-light {
+  background-repeat: no-repeat;
+  background-size: 100%;
+  background-color: white; /* background color */
+  color: black; /* text color */
+  vertical-align:middle;
+  text-align:left;
+}
+.title-slide-light .remark-slide-number {
+  display: none; /* hides slide number on the title page */
+}
+.title-slide-light h1, .title-slide-light h2, .title-slide-light h3, .title-slide-light h4, .title-slide-light p {
+  display: block;
+  background: rgb(255,255,255); /* black background for browsers that don't support opacity */
+  background: rgba(255,255,255,0.6); /* semi-transparent black background for browsers that do support opacity */
+  position: relative;
+  left: -12%;
+  width: 112%;
+  margin:0;
+  border:0;
+  padding:10px 80px;
+}
+.title-slide-light #title-footer {
+    background: rgb(255,255,255); /* white background for browsers that don't support opacity */
+    background: rgba(255,255,255,0.6); /* semi-transparent white background for browsers that do support opacity */
+    position: absolute; 
+    top: 88%; /* top of footer starts 88% of way down slide */
+    bottom: 1; /* top of footer starts 80% of way down slide */
+    left: 0; /* left of footer starts on the left side of slide */
+    margin:0px;
+    padding:15px 52px;
+    width:100%;
+    height:100%;
+    text-align:center;
+}
+
+.title-slide-light img {
+    height: 8%;
+    margin: 0px 30px;
+    float:left;
+}
+
+#logo-footer-black {
+  content:url("../img/sfg-logo-black.png");
+  position: absolute; 
+  top: 88%;
+  right: 0;
+  padding: 15px;
+  height: 8%;
+  text-align:left;
+}
+
+#logo-footer-white {
+  content:url("../img/sfg-logo-white.png");
+  position: absolute; 
+  top: 88%;
+  right: 0;
+  padding: 15px;
+  height: 8%;
+  text-align:left;
+}
+
+
+/*--------------------*/
+/* Section 2: General */
+/*--------------------*/
+
+/* Hyperlinks */
+a, a > code {
+  color: rgb(249, 38, 114);
+  text-decoration: none;
+}
+
+/* Footnotes */
+.footnote {
+  position: absolute;
+  bottom: 3em;
+  padding-right: 4em;
+  font-size: 90%;
+}
+.remark-code-line-highlighted     { background-color: #ffff88; }
+
+/* Slide class = "dark" */
+.dark {
+  background-color: #272822; /* background color */
+  color: #d6d6d6; /* text color */
+}
+.dark h1, .dark h2, .dark h3 {
+  color: #f3f3f3; /* header colors */
+}
+
+/* Slide class = "blue" */
+.blue {
+  background-color: #358bd6; /* background color */
+  color: #ffffff; /* text color */
+}
+.blue h1, .blue h2, .blue h3 {
+  color: #f3f3f3; /* header colors */
+}
+
+/* Two-column layout */
+.left-column {
+  color: #777;
+  width: 20%;
+  height: 92%;;
+  float: left;
+}
+.left-column h2:last-of-type, .left-column h3:last-child {
+  color: #000;
+}
+.right-column {
+  width: 75%;
+  float: right;
+  padding-top: 1em;
+}
+.pull-left {
+  float: left;
+  left: 0;
+  width: 47%;
+}
+.pull-right {
+  float: right;
+  right: 0;
+  width: 47%;
+}
+.pull-right ~ * {
+  clear: both;
+}
+.pull-center {
+  display:block;
+  position:relative;
+  right: -10%; /* or right 50% */
+  text-align: left;
+  width: 100%;
+}
+
+/* Images, Videos, Etc. */
+img, video, iframe {
+  max-width: 100%;
+}
+
+/* Blockquotes */
+blockquote {
+  border-left: solid 5px lightgray;
+  padding-left: 1em;
+}
+
+/* Tables */
+table {
+  margin: auto;
+  border-top: 1px solid #666;
+  border-bottom: 1px solid #666;
+}
+table thead th { border-bottom: 1px solid #ddd; }
+th, td { padding: 5px; }
+thead, tfoot, tr:nth-child(even) { background: #eee }
+
+/* Presentation Transformation */
+@page { margin: 0; }
+@media print {
+  .remark-slide-scaler {
+    width: 100% !important;
+    height: 100% !important;
+    transform: scale(1) !important;
+    top: 0 !important;
+    left: 0 !important;
+  }
+}

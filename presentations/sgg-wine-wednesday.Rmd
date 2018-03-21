@@ -1,0 +1,419 @@
+---
+title: "Predictive Modeling in R"
+subtitle: "SFG Wine Wednesdays"
+author: "Dan Ovando - weirdfishes.blog"
+date: "March 21, 2018"
+output:
+  xaringan::moon_reader:
+    lib_dir: libs
+    # css: 'css/sfg-template-xaringan.css'
+    # seal: true
+    nature:
+      highlightStyle: github
+      highlightLines: true
+      countIncrementalSlides: false
+---
+
+```{r setup, include=FALSE}
+set.seed(43)
+
+knitr::opts_chunk$set(echo = T, message = F, warning = F, dev = "svg")
+options(htmltools.dir.version = FALSE)
+library(htmltools)
+library(recipes)
+library(rsample)
+library(caret)
+library(hrbrthemes)
+library(extrafont)
+library(gapminder)
+library(broom)
+library(tidyposterior)
+library(tidyverse)
+extrafont::loadfonts()
+
+theme_set(theme_ipsum(base_size = 18, axis_title_size = 20))
+
+```
+
+# Predictive Modeling
+
+We usually model for two reasons:
+
+  - Understand a process: 
+      
+      - "How do tax cuts affect economic growth?"
+      
+      - regressions, structural modeling
+  
+  - Make predictions: 
+  
+      - "How many salmon will I have next year?"
+      
+      - regressions, structural modeling, **machine learning**
+
+See [Applied Predictive Modeling](http://appliedpredictivemodeling.com/) by Kuhn & Johnson
+
+---
+
+# Predictive Modeling
+
+Predictive modeling is both harder and easier than "estimation" modeling
+
+  - Predictions are hard: We can get still get precise estimates from model that's bad at predicting (take a look at the average R^2^ in ecology papers)
+  
+  - Success is easy to measure: did you predict well or not?
+
+---
+
+# Predictive Modeling in R
+
+Because just about any predictive model has the same objective, they can all be broken down into about the same process
+
+1. Decide what you're trying to predict
+
+2. Decide what you're going to use to predict
+
+3. Split your data into "analysis" (training) and "assessment" (test) sets
+
+4. Split your analysis data up many more times to tune models
+
+5. "Feature engineer" your data splits (center-scale, box-cox transformations, polynomials, etc.)
+
+6. Tune nuisance parameters (number of splits, number of trees, etc.)
+
+7. Once you've got your "best" model, train it on the training data, test it on the testing
+
+8. Repeat for many different models
+
+R has lots of helpful things in here
+
+---
+
+# Data-splitting using `rsample`
+
+Data-splitting can improve performance (que statistician meltdown)
+
+- Random sampling (hold out some random ones for training)
+
+- Stratifed (random sampling within subgroups)
+
+- Targeted (historic vs. future)
+
+[`rsample`](https://topepo.github.io/rsample/) has numerous functions to help with this (`recipes` and `rsample` are intended to replace `modelr`)
+
+---
+
+# Data-splitting using `rsample`
+`rsample::initial_split` helps with the initial data split (when needed)
+
+
+```{r}
+gap_split <- rsample::initial_split(gapminder, prop = .9)
+gap_train <- rsample::training(gap_split)
+gap_test  <- testing(gap_split)
+
+```
+
+```{r, echo = F, fig.width=8, fig.height=4, fig.align="center"}
+
+gap_train %>% 
+  mutate(source = "train") %>% 
+  bind_rows(gap_test %>% mutate(source = "test")) %>% 
+  group_by(continent, source) %>% 
+ count() %>% 
+  group_by(source) %>% 
+  mutate(n = n / sum(n)) %>% 
+  ungroup() %>% 
+  mutate(continent = fct_reorder(continent, n)) %>% 
+  ggplot(aes(continent, n, fill = source)) + 
+  geom_col(position = "dodge")
+  
+```
+
+
+---
+
+# Data-splitting using `rsample`
+
+```{r}
+gap_split <-
+  rsample::initial_split(gapminder, prop = .9, strata = "continent")
+  gap_train <- rsample::training(gap_split)
+  gap_test  <- testing(gap_split)
+```
+
+
+
+```{r, echo = F, fig.width=8, fig.height=4, fig.align="center"}
+gap_train %>% 
+  mutate(source = "train") %>% 
+  bind_rows(gap_test %>% mutate(source = "test")) %>% 
+  group_by(continent, source) %>% 
+ count() %>% 
+  group_by(source) %>% 
+  mutate(n = n / sum(n)) %>% 
+  ungroup() %>% 
+  mutate(continent = fct_reorder(continent, n)) %>% 
+  ggplot(aes(continent, n, fill = source)) + 
+  geom_col(position = "dodge")
+
+```
+
+
+
+
+---
+
+# v-fold and bootstrapping using `rsample`
+
+Once we've got our data, we now want to create several more splits of the `training` data for model tuning and design
+
+v-fold cross validation splits the data into v different blocks, each with roughly the same number of unique observations in it
+
+- generates *v* sets of "assessment" data with no overlap with the others
+
+`rsample::vfold_cv` does this for you, and stores indicies to the subsampled data instead of repeated copies. 
+
+---
+
+# v-fold and bootstrapping using rsample
+
+```{r}
+
+gap_vfold <- rsample::vfold_cv(gap_train, v = 10, repeats = 5) %>% 
+  mutate(analysis_data = map(splits, rsample::analysis),
+         assessment_data = map(splits, rsample::assessment))
+
+head(gap_vfold)
+
+```
+
+```{r}
+head(gap_vfold$analysis_data[[1]] %>% as_data_frame())
+```
+
+---
+
+# Model Preparation Using recipes
+
+Modeling often involves a **lot** of data processing (feature selection)
+
+  - remove outliers
+  
+  - center and scale
+  
+  - log transform
+  
+  - test polynomials
+  
+My code is usually ~80% processing
+  
+[`recipes`](https://topepo.github.io/recipes/) provides a tidy system for doing all this
+
+
+---
+
+
+# Model Preparation Using recipes
+```{r}
+gap_recipe <-
+  recipes::recipe(lifeExp ~ 
+                    country + gdpPercap + year, 
+                  data = gapminder) %>%
+  step_log(lifeExp) %>% 
+  step_center(all_numeric(), -all_outcomes()) %>% 
+  step_scale(all_numeric(), -all_outcomes()) %>%
+  step_dummy(all_nominal())  
+gap_recipe
+
+```
+
+---
+
+# `recipes`
+
+We can now `prep` the model with new data, and see our processed data using `bake`
+
+```{r}
+gap_model <- recipes::prep(gap_recipe, training = gap_vfold$analysis_data[[1]], verbose = TRUE)
+
+```
+
+---
+
+# `recipes`
+
+```{r}
+bake(gap_model, 
+     newdata = gap_vfold$analysis_data[[1]]) %>% 
+  select(1:5) %>% 
+  head()
+ 
+```
+
+
+---
+
+# `recipes`
+
+And now fit our model
+```{r}
+
+lm(lifeExp ~ .,
+   data = bake(gap_model, 
+               newdata = gap_vfold$analysis_data[[1]])) %>% 
+  glance()
+   
+```
+
+---
+
+# recipies + purrr
+
+Putting it all together, we can now easily fit a model to each of our v-fold splits
+
+```{r}
+
+gap_vfold <- gap_vfold %>% 
+  mutate(baked_analysis = map(analysis_data, ~prep(gap_recipe, newdata = .x) %>% bake(newdata = .x))) %>% 
+  mutate(gap_fit = map(baked_analysis, ~lm(lifeExp ~., data = .x))) %>% 
+  mutate(baked_assessment = map(assessment_data, ~prep(gap_recipe, newdata = .x) %>% bake(newdata = .x))) %>% 
+  mutate(r2 = map2_dbl(gap_fit, baked_assessment, ~modelr::rsquare(.x, .y))) 
+
+```
+
+```{r, echo = F, fig.width=8, fig.height=3.5, fig.align="center"}
+
+gap_vfold %>% 
+  ggplot(aes(r2)) + 
+  geom_density(fill = "steelblue") + 
+  labs(x = expression(R^{2})) +
+    coord_cartesian(xlim = c(0.8, 1), expand = c(0,0))
+
+```
+
+
+---
+
+# `carets` in Black Boxes
+
+  - [`caret`](http://topepo.github.io/caret/index.html) was designed to automate many processing and model tuning steps
+  
+    - e.g. tuning parameters for machine learning
+    
+    - provides one interface for > 200 different models
+    
+    - built in parallel capacity
+  
+  - `caret` is the ultimate untidy function: takes a pile of parameters and does a pile of things
+
+  - Very handy, but development is likely to freeze soon for `parsnip` (tidy `caret`)
+  
+
+---
+
+# caret
+
+Suppose we want to run a random forest model to predict life expectancy. 
+
+Random forests through `ranger` have a few "tuning" parameters 
+
+  - `mtry`: how many variables to sample at each split
+  
+There's no analytical answer to these: we have to just try a bunch of different values and see what works. We could of course code this ourselves, but `caret` can do this for us. 
+
+```{r}
+rf_gap <- caret::train(x = gap_train %>% select(-lifeExp),
+                       y = gap_train$lifeExp,
+                       method = "ranger",
+                       preProcess = c("center","scale"),
+                       importance = "impurity_corrected")
+
+
+rf_gap$bestTune
+```
+
+---
+
+# caret
+
+```{r, echo = F, fig.height=5, fig.width=6}
+
+ rf_gap$finalModel$variable.importance %>% 
+  broom::tidy() %>% 
+  rename(variable = names, importance = x) %>% 
+  mutate(variable = fct_reorder(variable,importance)) %>% 
+  ggplot(aes(variable, importance)) + 
+  geom_col() + 
+  coord_flip()
+```
+
+
+---
+
+# Model Comparison with `tidyposterior`
+
+  - Good predictive modeling means comparing multiple competing models
+
+  - We often use AIC, DIC, BIC, something like that. Not always ideal
+
+  - What we want is, "what is the probability that a given model is "best", given the data": enter Bayes!
+  
+  - [`tidyposterior`](https://topepo.github.io/tidyposterior/) leverages the cross-validation step to fit a Bayesian hierarchichal model comparing the different models
+
+---
+
+# Model Comparison with tidyposterior
+
+```{r, echo = F, message = F, warning = F, include = F}
+
+data("precise_example")
+
+rocs <- precise_example %>%
+   select(id, contains("ROC")) %>%
+   setNames(tolower(gsub("_ROC$", "", names(.)))) 
+
+rocs_stacked <- gather(rocs)
+
+roc_model <- perf_mod(rocs, seed = 2824, verbose = F)
+
+glm_v_nnet <- contrast_models(roc_model, "nnet", "glm")
+
+```
+```{r, echo = F, fig.height=5}
+ggplot(glm_v_nnet, size = 0.02) + 
+  labs(title = "Performance of Neural Net relative to GLM",
+       subtitle = "Dashed lines show 'meaningful' difference")
+```
+
+---
+
+# keras + tensorflow
+
+[tensorflow](https://tensorflow.rstudio.com/) is a pretty insane software library that uses data-flow graphs to make insanely complicated possible (think Google Brain)
+
+the [`keras`](https://keras.rstudio.com/) package provides an easy interface between R and `tensorflow`, putting neural-nets, deep learning, etc. at your fingertips
+
+
+---
+
+# greta
+
+[`greta`](https://greta-dev.github.io/greta/index.html) is a new package that uses `tensorflow` for crazy fast (and distributed MCMC)
+
+Most importantly, you write it in R!
+
+Example [here](https://greta-dev.github.io/greta/example_models.html)
+
+Stan probably faster for small problems, greta for large problems
+
+---
+
+class: center, middle
+
+# Thanks!
+
+Materials and tutorials will be up at [weirdfishes.blog](https://weirdfishes.blog)
+
+github: DanOvando
+twitter: @DanOvand0
