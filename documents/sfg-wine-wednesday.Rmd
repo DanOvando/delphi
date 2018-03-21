@@ -1,14 +1,25 @@
 ---
-title: "Predictive Modeling Workshop"
+title: "SFG Predictive Modeling Workshop"
 author: "Dan Ovando"
 date: "3/20/2018"
-output: html_document
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+bibliography: Dissertation.bib
+biblio-style: apalike
+
 ---
 
 ```{r setup, include=FALSE}
 set.seed(43)
 
-knitr::opts_chunk$set(echo = T, message = F, warning = F, cache = FALSE)
+knitr::opts_chunk$set(
+echo = T,
+message = F,
+warning = F,
+cache = FALSE
+)
 library(recipes)
 library(rsample)
 library(caret)
@@ -64,7 +75,7 @@ This workshop is going to spend very little time on actual machine learning, and
 
 8. Repeat for many different models
 
-In this example we're going to walk through how to use some of the tools and ideas presented in Max Kuhn's Applied Predictive Modeling shortcourse from RStudio::conf2018.
+In this example we're going to walk through how to use some of the tools and ideas presented in Max Kuhn's Applied Predictive Modeling short course from RStudio::conf2018.
 
 
 # A Few General Notes
@@ -76,16 +87,16 @@ This is my own definition, so take it with a grain of salt. We can roughly call 
 All of these methods require us as users to make decisions about what kinds of distributions we want to use, what data we want to use, and how we want to structure the relationships between our data and our outcome of interest. 
 Machine learning takes most of this process out of our hands. While any model fitting needs to have some kind of objective function (e.g. minimize RMSE), machine learning isn't looking to fit any specific statistical model, or any specified structural form. Instead, you're telling the machine, given the data and a few guiding principles, find the best way to use that data I've given you to solve the problem I've assigned you. This can span from simpler examples like k-nearest-neighbor models, on up to neural nets, but they all work in a similar process. The advantage to this is that it allows you to fit highly non-linear processes that might not conform to the neat rules of order we impose on the universe through statistical modeling. 
 
-The downside is that we lose most of those tricks for statistical inference that we get from our statistical models (confidence intervals, marginal effects. etc). The other downside is that while statistical models often have theoretical reaons why one particular type of model or specification may be preferable to another, we don't really have that with machine learning models. While some types of ML models seems to be better for different kinds of problems, even the most experienced users don't have a great sense of exactly when (and why) a given type of model works best. As a result, you have to just try a whole bunch of different options. So, being good at applying machine learning is less of an exercise in being statistically saavy and more of an exercise in being a good and efficient programmer. 
+The downside is that we lose most of those tricks for statistical inference that we get from our statistical models (confidence intervals, marginal effects. etc). The other downside is that while statistical models often have theoretical reasons why one particular type of model or specification may be preferable to another, we don't really have that with machine learning models. While some types of ML models seems to be better for different kinds of problems, even the most experienced users don't have a great sense of exactly when (and why) a given type of model works best. As a result, you have to just try a whole bunch of different options. So, being good at applying machine learning is less of an exercise in being statistically savvy and more of an exercise in being a good and efficient programmer. 
 
 
 ## Why R for this?
 
-Machine learning tools often require us to run huge numbers of comutations. Wouldn't we be better off in C++, python, tensorflow, or really anything else faster than R?
+Machine learning tools often require us to run huge numbers of computations. Wouldn't we be better off in C++, python, tensorflow, or really anything else faster than R?
 
-The reason that R is great for predictive modeling (and machine learning) is that 90% of the code, from our perpsective, is in data splitting, data processing, running alternate models, etc, and this is the kind of thing that R (and specifically the `tidyverse`) is great at. 
+The reason that R is great for predictive modeling (and machine learning) is that 90% of the code, from our perspective, is in data splitting, data processing, running alternate models, etc, and this is the kind of thing that R (and specifically the `tidyverse`) is great at. 
 
-It's pretty unlikely that you'll be coding your own machine learning algorithm, and so most of the time the actual call to your specific algorithm will only take up a few lines your code: all the rest will be data wrangling! Hence, using R as your base and porting to other laungauges where needed is actually a pretty optimal workflow. 
+It's pretty unlikely that you'll be coding your own machine learning algorithm, and so most of the time the actual call to your specific algorithm will only take up a few lines your code: all the rest will be data wrangling! Hence, using R as your base and porting to other languages where needed is actually a pretty optimal workflow. 
 
 
 # What are we trying to predict?
@@ -94,7 +105,7 @@ For this exercise, we're going to revisit the ideas behind @Costello2012:
 
 **Can we use catch data and life history data to predict B/B~MSY~?**
 
-At its core, this is actually pretty close to an ideal problem for machine learning. We stayted in the paper that we're not really trying to interpret the coeffeficients, we're just interested in predicting, and predicting out-of-sample. 
+At its core, this is actually pretty close to an ideal problem for machine learning. We stated in the paper that we're not really trying to interpret the coefficients, we're just interested in predicting, and predicting out-of-sample. 
 
 # Decide what you're going to use to predict
 
@@ -122,20 +133,22 @@ ram %>%
 
 ```{r}
 
-ram %>% 
-  select(year, bdivbmsypref,udivumsypref) %>% 
-  gather(variable, value, contains("pref")) %>% 
-  mutate(value = pmin(4,value)) %>% 
-  group_by(year, variable) %>% 
-  summarise(median_value = median(value, na.rm = T),
-            min_value = min(value, na.rm = T),
-            max_value = max(value, na.rm = T)) %>% 
-  ungroup() %>% 
-  ggplot() + 
+ram %>%
+  select(year, bdivbmsypref, udivumsypref) %>%
+  gather(variable, value, contains("pref")) %>%
+  mutate(value = pmin(4, value)) %>%
+  group_by(year, variable) %>%
+  summarise(
+  median_value = median(value, na.rm = T),
+  min_value = min(value, na.rm = T),
+  max_value = max(value, na.rm = T)
+  ) %>%
+  ungroup() %>%
+  ggplot() +
   geom_ribbon(aes(x = year, ymin = min_value, ymax = max_value),
-                  alpha = 0.25) + 
+  alpha = 0.25) +
   geom_line(aes(x = year, y = median_value, color = variable)) +
-  facet_wrap(~variable)
+  facet_wrap( ~ variable)
   
 ```
 
@@ -143,23 +156,46 @@ To be consistent with @Costello2012, let's add in some lags to the catch data, a
 
 ```{r}
 
-important_vars <- 
-
-  candidate_variables <- c("loo","k","winfinity","tmax","tm","m","lm","temperature","tcbest", "tcbest_lag1","tcbest_lag2",
-                         "tcbest_lag3","tcbest_lag4")
-
-ram <- ram %>% 
-  group_by(stockid) %>% 
-  arrange(year) %>% 
-  mutate(tcbest_lag1 = dplyr::lag(tcbest,1),
-         tcbest_lag2 = dplyr::lag(tcbest,2),
-         tcbest_lag3 = dplyr::lag(tcbest,3),
-         tcbest_lag4 = dplyr::lag(tcbest,4),
-         tcbest_lag5 = dplyr::lag(tcbest,5)) %>% 
-  ungroup() %>% 
-  mutate(b = pmin(6, bdivbmsypref)) %>% 
-  mutate(log_b = log(b)) %>% 
-  select(bdivbmsypref, log_b, b, year, region, scientificname, stockid,candidate_variables) %>% 
+important_vars <-
+  
+  candidate_variables <-
+  c(
+  "loo",
+  "k",
+  "winfinity",
+  "tmax",
+  "tm",
+  "m",
+  "lm",
+  "temperature",
+  "tcbest",
+  "tcbest_lag1",
+  "tcbest_lag2",
+  "tcbest_lag3",
+  "tcbest_lag4"
+  )
+  
+  ram <- ram %>%
+  group_by(stockid) %>%
+  arrange(year) %>%
+  mutate(
+  tcbest_lag1 = dplyr::lag(tcbest, 1),
+  tcbest_lag2 = dplyr::lag(tcbest, 2),
+  tcbest_lag3 = dplyr::lag(tcbest, 3),
+  tcbest_lag4 = dplyr::lag(tcbest, 4),
+  tcbest_lag5 = dplyr::lag(tcbest, 5)
+  ) %>%
+  ungroup() %>%
+  mutate(b = pmin(6, bdivbmsypref)) %>%
+  mutate(log_b = log(b)) %>%
+  select(bdivbmsypref,
+  log_b,
+  b,
+  year,
+  region,
+  scientificname,
+  stockid,
+  candidate_variables) %>%
   na.omit()
   
 
@@ -196,13 +232,13 @@ ram %>%
 
 That's enough data wrangling for now, let's get to predictive modeling. 
 
-Data-splitting is a key concept in predictive modeling. The basic idea: what we care about it predictive accuracry. To gauge that, we needs to create hold-out data that isn't used in the model fitting. 
+Data-splitting is a key concept in predictive modeling. The basic idea: what we care about it predictive accuracy. To gauge that, we needs to create hold-out data that isn't used in the model fitting. 
 
 ![](splitting.png)
 
-This can seem like blasphemy, especially in ecologial contexts where data are hard to come by! The question of when and how much to split is a tough one. You can think of it like "spending" your data. You can spend all your data budget on fitting, and have have non left over to validate your fit, or you could spend it all on testing and have no data to fit your model to, or of course, find some balance in between that fits your needs. 
+This can seem like blasphemy, especially in ecological contexts where data are hard to come by! The question of when and how much to split is a tough one. You can think of it like "spending" your data. You can spend all your data budget on fitting, and have have non left over to validate your fit, or you could spend it all on testing and have no data to fit your model to, or of course, find some balance in between that fits your needs. 
 
-To illustrate why this is important, this graph shows the accuracy of a predictive model on the model data the model was trained on (red) and the accuracy of the model on data held out from the training proces (black). We'll come back to this graph later. 
+To illustrate why this is important, this graph shows the accuracy of a predictive model on the model data the model was trained on (red) and the accuracy of the model on data held out from the training process (black). We'll come back to this graph later. 
 
 
 ![](overfitting.png)
@@ -276,7 +312,7 @@ v-fold cross validation splits the data into v different blocks, each with rough
 
 - generates *v* sets of "assessment" data with no overlap with the others
 
-`rsample::vfold_cv` does this for you, and stores indicies to the subsampled data instead of repeated copies 
+`rsample::vfold_cv` does this for you, and stores indices to the sub sampled data instead of repeated copies 
 
 -Kuhn recommends 10 fold cross validation with 5 repeats
 
@@ -304,7 +340,7 @@ head(ram_boot)
 
 We'll stick with vfold for now. 
 
-Even at this point we've gottens somewhere pretty cool. We could of course have just run a model on our raw RAM data. This doesn't really give us a measure of OOB predictive power. Now, we can start to get some ectual evidence of our ability. 
+Even at this point we've gotten somewhere pretty cool. We could of course have just run a model on our raw RAM data. This doesn't really give us a measure of OOB predictive power. Now, we can start to get some actual evidence of our ability. 
 
 To give an example, let's use `purrr` to see how well a simple linear model using catch performs
 
@@ -313,21 +349,27 @@ To give an example, let's use `purrr` to see how well a simple linear model usin
 
 dep_var <- "log_b"
 
-ind_vars <- c('tcbest', "tcbest_lag1","tcbest_lag2","tcbest_lag3","tcbest_lag4")
+ind_vars <-
+c('tcbest',
+"tcbest_lag1",
+"tcbest_lag2",
+"tcbest_lag3",
+"tcbest_lag4")
 
 split <- ram_vfold$splits[[1]]
 
-lm_foo <- function(dep_var, ind_vars, split){
-  
-  formula <- as.formula(paste0(dep_var, "~", paste(ind_vars, collapse = "+")))
-  
-  fitted_lm <- lm(formula, data = rsample::analysis(split))
-  
-  lm_performance <- rsample::assessment(split) %>% 
-    modelr::add_predictions(model = fitted_lm)
-    
-  lm_rq <- yardstick::rsq(lm_performance, truth = log_b, estimate = pred)
-  
+lm_foo <- function(dep_var, ind_vars, split) {
+formula <-
+as.formula(paste0(dep_var, "~", paste(ind_vars, collapse = "+")))
+
+fitted_lm <- lm(formula, data = rsample::analysis(split))
+
+lm_performance <- rsample::assessment(split) %>%
+modelr::add_predictions(model = fitted_lm)
+
+lm_rq <-
+yardstick::rsq(lm_performance, truth = log_b, estimate = pred)
+
 }
 
 ```
@@ -394,7 +436,7 @@ So how does it get there? Too oversimplify badly....
 
 1. Search over all predictors and values of those predictors and find the split that minimizes the sum of squares of the observed values in a split and the mean predicted value in that split
 
-2. Taking that first split as given, repeate the process at each node
+2. Taking that first split as given, repeat the process at each node
 
 3. Stop when there aren't enough observations left in the terminal nodes (or some other stopping criteria)
 
@@ -404,9 +446,9 @@ And that's it! This gives us something like the outcome of @Gutierrez2012
 
 ## Making a Forest
 
-Regression trees are handy since they are somewhat interpretable if the number of splits is relatively low, and in the right circumstances can work pretty well. 
+Regression trees are handy since they are somewhat interpret-able if the number of splits is relatively low, and in the right circumstances can work pretty well. 
 
-The problem is they tend to be "high variance, low bias". Meaning, they tend to do a really goob job of predicting the data that they are trained on, but the actual structure of the tree can vary wildly with small changes to the input data. Not really an ideal feature for a model that we want to use for out-of-sample prediction. 
+The problem is they tend to be "high variance, low bias". Meaning, they tend to do a really good job of predicting the data that they are trained on, but the actual structure of the tree can vary wildly with small changes to the input data. Not really an ideal feature for a model that we want to use for out-of-sample prediction. 
 
 Enter the random forest!
 
@@ -426,7 +468,7 @@ The prediction from the forest is then a weighted (weighting methods vary) avera
 
 This acts to make the process much less high variance, and much better for out of sample prediction. 
 
-The problem is you lose the interpretability of the regression tree; there's not really any way to look at the "coefficients" of a given variable anymore (we'll touch a bit more on this later)
+The problem is you lose the interpret-ability of the regression tree; there's not really any way to look at the "coefficients" of a given variable anymore (we'll touch a bit more on this later)
 
 So now let's take a look at actually fitting a random forest
 
@@ -436,7 +478,7 @@ Do to that, we're going to need to address two problems: feature engineering and
 
 ## Tuning Parameters
 
-While statistical models make you specify things like functional forms and error structures, they have the advangatve of having "solutions" to most of their parameters (e.g. a covariance matrix in OLS). 
+While statistical models make you specify things like functional forms and error structures, they have the advantage of having "solutions" to most of their parameters (e.g. a covariance matrix in OLS). 
 
 In contrast, most machine learning approaches have a number of tuning parameters that don't have any analytical solution: the only way to figure out what the "best" values are is to use something like cross validation to test a bunch of alternative values. 
 
@@ -444,20 +486,39 @@ In the case of random forests, the most common tuning parameter is the number of
 
 There are a LOT of different packages out there for running random forests, and each of them has their own tuning parameters. We're going to use the `ranger::ranger` function here. The other tuning parameter for `ranger` is `splitrule`, which is the rule by which each tree decides to make a tree. The options are "variance", "extratrees" or "maxstat" (don't ask me what these mean). 
 
-There are lots of other options you can mess with with, but these are the basics. So, we have to devide on `mtry` and `splitrule`, how do we make that decision? Well, we already have our nice analysis-assessment data splits that we created with `vfold`. Why don't we test every combination of `mtry` and `splitrule` on each of those splits and see which one works best?
+There are lots of other options you can mess with with, but these are the basics. So, we have to decide on `mtry` and `splitrule`, how do we make that decision? Well, we already have our nice analysis-assessment data splits that we created with `vfold`. Why don't we test every combination of `mtry` and `splitrule` on each of those splits and see which one works best?
 
 To do that, say hello to your new best friend in machine learning, `expand.grid`! `expand.grid` creates factorial combinations of each of the elements that you pass it. 
 
 ```{r}
 
-candidate_variables <- c("loo","k","winfinity","tmax","tm","m","lm","temperature","tcbest", "tcbest_lag1","tcbest_lag2",
-                         "tcbest_lag3","tcbest_lag4")
-
-candidate_params <- expand.grid(mtry = c(2,round(length(candidate_variables)/3), length(candidate_variables)),
-                                splitrule = c("variance", "extratrees","maxstat")) %>% 
+candidate_variables <-
+  c(
+  "loo",
+  "k",
+  "winfinity",
+  "tmax",
+  "tm",
+  "m",
+  "lm",
+  "temperature",
+  "tcbest",
+  "tcbest_lag1",
+  "tcbest_lag2",
+  "tcbest_lag3",
+  "tcbest_lag4"
+  )
+  
+  candidate_params <-
+  expand.grid(
+  mtry = c(2, round(length(
+  candidate_variables
+  ) / 3), length(candidate_variables)),
+  splitrule = c("variance", "extratrees", "maxstat")
+  ) %>%
   as_data_frame()
-
-candidate_params
+  
+  candidate_params
 
 ```
 
@@ -482,12 +543,12 @@ Consider the case we have here: in our candidate variables we have both total ca
 
 ```{r}
 
-ram %>% 
-  select(tcbest, m) %>% 
-  gather(variable, value) %>% 
-  ggplot(aes(value, fill = variable)) + 
-  geom_histogram(show.legend = F) + 
-  facet_wrap(~variable, scales = "free_x")
+ram %>%
+  select(tcbest, m) %>%
+  gather(variable, value) %>%
+  ggplot(aes(value, fill = variable)) +
+  geom_histogram(show.legend = F) +
+  facet_wrap( ~ variable, scales = "free_x")
 
 ```
 
@@ -503,9 +564,11 @@ Let's take a look.
 
 ```{r}
 
+
 dep_var <- "b"
 
-ram_recipe <- recipes::recipe(b ~ ., data = ram %>% select(dep_var, candidate_variables))
+ram_recipe <-
+recipes::recipe(b ~ ., data = ram %>% select(dep_var, candidate_variables))
 
 ```
 
@@ -515,11 +578,11 @@ Now, before we manually added a variable called log_b to the data. There's not r
 
 ```{r}
 
-ram_recipe <- ram_recipe %>% 
+ram_recipe <- ram_recipe %>%
   recipes::step_log(all_outcomes())
-
-ram_recipe
-
+  
+  ram_recipe
+  
 ```
 
 
@@ -593,7 +656,7 @@ We also have our recipe for processing the data that we want to use in the model
 
 We're now ready to start fitting some models. What we need to do is fit our random forest model to the analysis split of each v-fold split, and repeat this process for each combination of our tuning parameters. 
 
-This is giong to take some functional programming and `purrr`
+This is going to take some functional programming and `purrr`
 
 Let's look at our functions first. Our goal is a function that returns a metric of choice, say  the mean root mean squared error (RMSE) of the random forest trained on the analysis data and tested on the assessment  for each combination of the tuning parameters. 
 
@@ -602,50 +665,83 @@ Inside the most nested part of this process, we'll use our recipe to process the
 
 ```{r}
 
-fit_forests <- function(mtry, splitrule, splits, candidate_variables, recipeee){
+fit_forests <-
+  function(mtry,
+  splitrule,
+  splits,
+  candidate_variables,
+  recipeee) {
+  test_ranger <-
+  function(split,
+  candidate_variables,
+  mtry,
+  splitrule,
+  recipeee) {
+  analysis_data <- rsample::analysis(split)
   
-  test_ranger <- function(split, candidate_variables, mtry, splitrule,recipeee){
-    
-    analysis_data <- rsample::analysis(split) 
-    
-    prepped_recipe <- recipes::prep(recipeee, training = analysis_data)
-    
-    analysis_data <- bake(prepped_recipe, newdata = analysis_data)
-    
-    assessment_data <- bake(prepped_recipe, newdata = rsample::assessment(split))
-    
-    fitted_forest <- ranger::ranger(b ~ ., data = analysis_data, mtry = mtry, splitrule = splitrule)
-    
-    assessment_data$prediction = predict(fitted_forest, data = assessment_data)$predictions
-    
-    metric <- yardstick::rmse(assessment_data,truth = b, estimate = prediction)
-    
+  prepped_recipe <-
+  recipes::prep(recipeee, training = analysis_data)
+  
+  analysis_data <- bake(prepped_recipe, newdata = analysis_data)
+  
+  assessment_data <-
+  bake(prepped_recipe, newdata = rsample::assessment(split))
+  
+  fitted_forest <-
+  ranger::ranger(b ~ .,
+  data = analysis_data,
+  mtry = mtry,
+  splitrule = splitrule)
+  
+  assessment_data$prediction = predict(fitted_forest, data = assessment_data)$predictions
+  
+  metric <-
+  yardstick::rmse(assessment_data, truth = b, estimate = prediction)
+  
   }
   
-  splits <- splits %>% 
-    mutate(fitted_forest = map_dbl(splits, test_ranger, candidate_variables = candidate_variables, mtry = mtry, splitrule = splitrule,recipeee = recipeee))
+  splits <- splits %>%
+  mutate(
+  fitted_forest = map_dbl(
+  splits,
+  test_ranger,
+  candidate_variables = candidate_variables,
+  mtry = mtry,
+  splitrule = splitrule,
+  recipeee = recipeee
+  )
+  )
   
   mean_metric <- mean(splits$fitted_forest)
-}
-
+  }
+  
 ```
 
 
 
 ```{r}
 
-candidate_params <- candidate_params %>% 
-  mutate(ranger_rmse = map2_dbl(mtry, splitrule, fit_forests, splits = ram_vfold, candidate_variables = candidate_variables, recipeee = ram_recipe))
-
-candidate_params <- candidate_params %>% 
+candidate_params <- candidate_params %>%
+  mutate(
+  ranger_rmse = map2_dbl(
+  mtry,
+  splitrule,
+  fit_forests,
+  splits = ram_vfold,
+  candidate_variables = candidate_variables,
+  recipeee = ram_recipe
+  )
+  )
+  
+  candidate_params <- candidate_params %>%
   arrange(ranger_rmse)
-
-best_mtry <- candidate_params$mtry[1]
-
-best_splitrule <- candidate_params$splitrule[1]
-
-candidate_params %>% 
-  ggplot(aes(splitrule, ranger_rmse, fill = factor(mtry))) + 
+  
+  best_mtry <- candidate_params$mtry[1]
+  
+  best_splitrule <- candidate_params$splitrule[1]
+  
+  candidate_params %>%
+  ggplot(aes(splitrule, ranger_rmse, fill = factor(mtry))) +
   geom_col(position = "dodge")
 
 
@@ -658,56 +754,81 @@ Time to predict our testing data right??
 
 We've forgotten one key step in here: model comparison! We just tried one model, a random forest fit using ranger. We should always be running alternative models and comparing them though. 
 
-For example, let's not fit alinear version of the model using the parameters we used above. This is basically model 1 from @Costello2012.
+For example, let's not fit linear version of the model using the parameters we used above. This is basically model 1 from @Costello2012.
 
 We're going to use the amazingly named [`tidyposterior`](https://topepo.github.io/tidyposterior/) package to do this. 
 
-First, we're going to calcualte a metric we care about, say root mean squared error (RMSE) for our two candidate models, the linear regression and the random forest
+First, we're going to calculate a metric we care about, say root mean squared error (RMSE) for our two candidate models, the linear regression and the random forest
 
 ```{r}
 
-lm_foo <- function(split, ind_vars,recipeee){
+lm_foo <- function(split, ind_vars, recipeee) {
+  formula <-
+  as.formula(paste0("b ~ ", paste(ind_vars, collapse = "+")))
   
-  formula <- as.formula(paste0("b ~ ", paste(ind_vars, collapse = "+")))
+  prepped_recipe <-
+  recipes::prep(recipeee, training =   rsample::analysis(split))
   
-   prepped_recipe <- recipes::prep(recipeee, training =   rsample::analysis(split))
-    
-    analysis_data <- bake(prepped_recipe, newdata = rsample::analysis(split))
-    
-    assessment_data <- bake(prepped_recipe, newdata = rsample::assessment(split))
-    
-    fitted_lm <- lm(b ~ ., data = analysis_data)
+  analysis_data <-
+  bake(prepped_recipe, newdata = rsample::analysis(split))
   
-  lm_performance <- assessment_data %>% 
-    modelr::add_predictions(model = fitted_lm)
-    
-  metric <- yardstick::rmse(lm_performance, truth = b, estimate = pred)
+  assessment_data <-
+  bake(prepped_recipe, newdata = rsample::assessment(split))
+  
+  fitted_lm <- lm(b ~ ., data = analysis_data)
+  
+  lm_performance <- assessment_data %>%
+  modelr::add_predictions(model = fitted_lm)
+  
+  metric <-
+  yardstick::rmse(lm_performance, truth = b, estimate = pred)
   
 }
 
-  ranger_foo <- function(split, candidate_variables, dep_var, mtry, splitrule,recipeee){
-    
-     analysis_data <- rsample::analysis(split) 
-    
-    prepped_recipe <- recipes::prep(recipeee, training = analysis_data)
-    
-    analysis_data <- bake(prepped_recipe, newdata = analysis_data)
-    
-    assessment_data <- bake(prepped_recipe, newdata = rsample::assessment(split))
-    
-    fitted_forest <- ranger::ranger(b ~ ., data = analysis_data, mtry = mtry, splitrule = splitrule)
-    
-    assessment_data$prediction = predict(fitted_forest, data = assessment_data)$predictions
-    
-    metric <- yardstick::rmse(assessment_data,truth = b, estimate = prediction)
-    
-  }
+ranger_foo <-
+function(split,
+candidate_variables,
+dep_var,
+mtry,
+splitrule,
+recipeee) {
+analysis_data <- rsample::analysis(split)
 
-  ram_vfold <- ram_vfold %>% 
-  mutate(lm_rmse = map_dbl(splits, lm_foo, ind_vars = candidate_variables,recipeee = ram_recipe),
-         ranger_rmse = map_dbl(splits, ranger_foo, candidate_variables = candidate_variables, mtry = candidate_params$mtry[1], splitrule = candidate_params$splitrule[1], recipeee = ram_recipe))
-  
-  
+prepped_recipe <-
+recipes::prep(recipeee, training = analysis_data)
+
+analysis_data <- bake(prepped_recipe, newdata = analysis_data)
+
+assessment_data <-
+bake(prepped_recipe, newdata = rsample::assessment(split))
+
+fitted_forest <-
+ranger::ranger(b ~ .,
+data = analysis_data,
+mtry = mtry,
+splitrule = splitrule)
+
+assessment_data$prediction = predict(fitted_forest, data = assessment_data)$predictions
+
+metric <-
+yardstick::rmse(assessment_data, truth = b, estimate = prediction)
+
+}
+
+ram_vfold <- ram_vfold %>%
+mutate(
+lm_rmse = map_dbl(splits, lm_foo, ind_vars = candidate_variables, recipeee = ram_recipe),
+ranger_rmse = map_dbl(
+splits,
+ranger_foo,
+candidate_variables = candidate_variables,
+mtry = candidate_params$mtry[1],
+splitrule = candidate_params$splitrule[1],
+recipeee = ram_recipe
+)
+)
+
+
 ram_vfold
 
 ```
@@ -718,7 +839,7 @@ That sounds like a job for statistics! There are lots of ways we could think abo
 
 What we'd love to be able to say is, what is the probability that model A is better than model B? Well, we now have some "data" on this: repeated observations of the performance of each model. So, we could think now that we might be able to get to the probability that a given model is better than another conditional on the observed data... this should be starting to ring some bells for any Bayesians!
 
-`tidyposterior` uses stan to run a Bayesian hierarchichal linear model of the form
+`tidyposterior` uses stan to run a Bayesian hierarchical linear model of the form
 
 $$ metric_{i} \sim \beta_0 +  \beta_{1}lm_i + \beta_2forest_i$$
 
@@ -726,10 +847,9 @@ where *i* is each split of the data.
 
 ```{r}
 
-ram_performance <- perf_mod(ram_vfold %>% select(-rsquare), seed = 42)
-
-
-
+ram_performance <-
+  perf_mod(ram_vfold %>% select(-rsquare), seed = 42)
+  
 ```
 
 ```{r, eval = F}
@@ -742,10 +862,11 @@ This gives us posterior probability distributions around the RMSE for each of th
 
 ```{r}
 
-forest_v_lm <- contrast_models(ram_performance, "ranger_rmse","lm_rmse")
-
-summary(forest_v_lm)
-
+forest_v_lm <-
+  contrast_models(ram_performance, "ranger_rmse", "lm_rmse")
+  
+  summary(forest_v_lm)
+  
 ```
 
 `contrast_models` also has a bunch of built in plotting features. If we've got enough data, it's pretty easy to find "differences" between models that might be trivial. We might be able to isolate a change in RMSE performance of 0.0001, but is that really meaningful?
@@ -773,16 +894,16 @@ Our first step now that we've tuned our random forest is to now used those tuned
 prepped_ram <- prep(ram_recipe, training = ram_train)
 
 fitted_forest <-
-ranger::ranger(
-b ~ .,
-data =  bake(prepped_ram, newdata = ram_train),
-mtry = best_mtry,
-splitrule = best_splitrule,
-importance = "impurity_corrected"
-)
+  ranger::ranger(
+    b ~ .,
+    data =  bake(prepped_ram, newdata = ram_train),
+    mtry = best_mtry,
+    splitrule = best_splitrule,
+    importance = "impurity_corrected"
+  )
 
 fitted_lm <-
-lm(b ~ ., data =  bake(prepped_ram, newdata = ram_train))
+  lm(b ~ ., data =  bake(prepped_ram, newdata = ram_train))
 
 ```
 
@@ -792,15 +913,16 @@ Variable importance is a measure of how many times a given variable was selected
 
 ```{r}
 
+
 variable_importance <-
-  data_frame(
-  variable = names(ranger::importance(fitted_forest)),
-  importance = ranger::importance(fitted_forest)
-  ) %>% 
-  mutate(variable = fct_reorder(variable, importance)) %>% 
-  ggplot(aes(variable, importance)) + 
-  geom_col() + 
-  coord_flip()
+data_frame(
+variable = names(ranger::importance(fitted_forest)),
+importance = ranger::importance(fitted_forest)
+) %>%
+mutate(variable = fct_reorder(variable, importance)) %>%
+ggplot(aes(variable, importance)) +
+geom_col() +
+coord_flip()
 
 variable_importance
 
@@ -812,17 +934,19 @@ And now that we have our fits, we can use these models to predict our testing da
 
 
 
-ram_results <- bake(prepped_ram, newdata = ram_test) %>% 
-  mutate(lm_pred = predict(fitted_lm, newdata = bake(prepped_ram, newdata = ram_test)),
-         forest_pred = predict(fitted_forest, data = bake(prepped_ram, newdata = ram_test))$predictions)
-
-ram_results %>% 
-  select(b, lm_pred, forest_pred) %>% 
-  gather(model, prediction, contains("pred")) %>% 
-  ggplot(aes(b, prediction, color = model)) + 
-  geom_point() + 
-  geom_abline(aes(intercept = 0, slope = 1), color = "red") + 
-  facet_wrap(~model)
+ram_results <- bake(prepped_ram, newdata = ram_test) %>%
+  mutate(
+  lm_pred = predict(fitted_lm, newdata = bake(prepped_ram, newdata = ram_test)),
+  forest_pred = predict(fitted_forest, data = bake(prepped_ram, newdata = ram_test))$predictions
+  )
+  
+  ram_results %>%
+  select(b, lm_pred, forest_pred) %>%
+  gather(model, prediction, contains("pred")) %>%
+  ggplot(aes(b, prediction, color = model)) +
+  geom_point() +
+  geom_abline(aes(intercept = 0, slope = 1), color = "red") +
+  facet_wrap( ~ model)
 
 ```
 
@@ -837,32 +961,34 @@ Now that we've gone through each step in the predictive modeling process painful
 ```{r}
 
 
+
 fit_control <- trainControl(
-  method = "repeatedcv",
-  number = 5,
-  repeats = 1,
-  allowParallel = TRUE
-  )
-  
-  caret_forest <-
-  caret::train(
-  ram_recipe,
-  data = ram_train,
-  method = "ranger",
-  trControl = fit_control
-  )
+method = "repeatedcv",
+number = 5,
+repeats = 1,
+allowParallel = TRUE
+)
+
+caret_forest <-
+caret::train(ram_recipe,
+data = ram_train,
+method = "ranger",
+trControl = fit_control)
 
 
-  ram_results <- ram_results %>% 
-  mutate(caret_pred = predict(caret_forest$finalModel, data = ram_results %>% select(candidate_variables))$predictions)
+ram_results <- ram_results %>%
+mutate(caret_pred = predict(
+caret_forest$finalModel,
+data = ram_results %>% select(candidate_variables)
+)$predictions)
 
-ram_results %>% 
-  select(b, lm_pred, forest_pred, caret_pred) %>% 
-  gather(model, prediction, contains("pred")) %>% 
-  ggplot(aes(b, prediction, color = model)) + 
-  geom_point() + 
-  geom_abline(aes(intercept = 0, slope = 1), color = "red") + 
-  facet_wrap(~model)
+ram_results %>%
+select(b, lm_pred, forest_pred, caret_pred) %>%
+gather(model, prediction, contains("pred")) %>%
+ggplot(aes(b, prediction, color = model)) +
+geom_point() +
+geom_abline(aes(intercept = 0, slope = 1), color = "red") +
+facet_wrap( ~ model)
 
 ```
 
@@ -870,8 +996,7 @@ The `caret` package is incredibly well documented [here](http://topepo.github.io
 
 Unfortunately, as a result `caret` is about as untidy as a function comes, and Max Kuhn is in the process of developing a new package that will attempt to tidy up this process. But for now, caret is a great way to go once you've gotten a feel for what's actually going on by doing it the hard way. Don't hate me!
 
-# Neural Nets
-
+# Work Cited
 
 
 
