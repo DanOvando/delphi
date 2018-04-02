@@ -1,0 +1,370 @@
+---
+title: "Are We Really Not Overfishing the Tropics?"
+author: "Dan Ovando, Tyler Clavelle, Juan Mayorga, Chris Costello"
+date: "3/23/2018"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+set.seed(43)
+
+knitr::opts_chunk$set(
+echo = T,
+message = F,
+warning = F,
+cache = FALSE
+)
+library(recipes)
+library(rsample)
+library(caret)
+library(broom)
+library(tidyposterior)
+library(tidyverse)
+library(FishLife)
+library(GUM)
+
+# Figure Theme
+theme_set(theme_minimal(base_size = 14, base_family = "Arial"))
+
+# Load function for processing data for PRM 
+source(file = "../scripts/format_for_prm.R")
+```
+
+We're going to use RAM v4.25 (with model fits) for this exercise
+
+```{r, message = FALSE, warning=FALSE}
+ram <- read_csv(here::here("processed_data", "ram_data.csv"))
+```
+
+To be consistent with @Costello2012, let's add in some lags to the catch data, and a few other goodies. Also, we're not going to tackle the problem of missing data today, but suffice to say that Kuhn & Johnson has a whole chapter to dealing with missing values which is a great tool for any kind of modeling. 
+
+```{r}
+## Create primary predictor variables
+ram_df <- ram %>%
+  filter(is.na(tcbest) == F) %>%
+  mutate(b_bmsy = pmin(6, bdivbmsypref)) %>% 
+  group_by(stockid) %>%
+  mutate(log_b               = log(b_bmsy),
+         max_catch           = max(tcbest, na.rm = T),
+         years_back          = rev(1:length(tcbest)),
+         scaled_catch        = tcbest / max(tcbest, na.rm = T),
+         scaled_lag1         = lag(scaled_catch, n = 1),
+         scaled_lag2         = lag(scaled_catch, n = 2),
+         scaled_lag3         = lag(scaled_catch, n = 3),
+         scaled_lag4         = lag(scaled_catch, n = 4),
+         mean_scaled_catch   = mean(scaled_catch, na.rm = T),
+         rolling_catch_ratio = tcbest / cummax(tcbest),
+         yrs_to_max_catch    = year[match(max_catch, tcbest)] - min(year)) %>%
+    ungroup()
+  
+# Calculate scaled catch window to include in regression
+slope_window <- 1:6 
+  
+catch_slope <- ram_df %>%
+  split(.$stockid) %>%
+  map_df(~ lm(scaled_catch[1:6] ~  slope_window, na.action='na.omit', data = . )$coefficients['slope_window']) %>%
+  gather() %>%
+  rename(stockid = key,
+         initial_scaled_catch_slope = value)
+  
+# Join catch slope data with RAM
+ram_df <- left_join(ram_df, catch_slope)
+  
+# Candidate variables to use
+candidate_variables <-c("loo","k","winfinity","tmax","tm","m","lm","temperature", "max_catch","years_back",
+                          "tcbest","scaled_lag1","scaled_lag2","scaled_lag3","scaled_lag4",
+                        "mean_scaled_catch", "rolling_catch_ratio", "yrs_to_max_catch", "initial_scaled_catch_slope")
+
+# Filter RAM to year >= 1950 and select variables of interest
+ram_df <- ram_df %>% 
+  select(b_bmsy,
+         log_b,
+         year,
+         region,
+         scientificname,
+         stockid,
+         candidate_variables) %>%
+  na.omit()
+```
+
+Our first step, let's split our data into training and testing sets. Out purpose is to be good at predicting. So, we want a nice clean set of data (the testing set), that the model hasn't been anywhere near. We won't touch this split until we're ready to publish. 
+
+The `rsample` package is where most of this stuff lives
+
+```{r}
+# Stratified random sampling by region
+ram_split <- rsample::initial_split(ram_df %>% ungroup(), prop = .8, strata = "region")
+ram_train <- rsample::training(ram_split)
+ram_test  <- rsample::testing(ram_split)
+```
+
+
+```{r, echo=FALSE}
+# Create a training and testing dataset based on the best/worst status fisheries in RAM
+ram_status_ranks <- ram_df %>% 
+  group_by(stockid) %>% 
+  summarize(mean_b = mean(b_bmsy, na.rm = T)) %>% 
+  ungroup() %>% 
+  mutate(rank = percent_rank(mean_b))
+
+# Best status RAM fisheries (75th percentile or greater)
+best_ram <- ram_status_ranks %>% 
+  filter(rank >= 0.5) %>% 
+  select(stockid) %>% 
+  left_join(ram_df)
+  
+# Worst status RAM fisheries (75th percentile or greater)
+worst_ram <- ram_status_ranks %>% 
+  filter(rank < 0.5) %>% 
+  select(stockid) %>% 
+  left_join(ram_df)
+
+# Rename RAM train and test if wanting to use best/worst data
+ram_train <- worst_ram
+ram_test <- best_ram
+```
+
+## PRM & Catch-MSY
+
+```{r}
+# Run RAM through GUM model
+ram_for_prm <- ram_train %>% 
+  rename(SciName = scientificname,
+         Year    = year,
+         Catch   = tcbest,
+         IdOrig  = stockid) %>% 
+  select(IdOrig, SciName, Year, Catch)
+```
+
+
+## Random Forest
+
+As the name implies, the package views modeling like a recipe, that takes data as ingredients and feature selection steps as cooking instructions. This allows model "recipes" to easily be carried around and passed to new data, and makes the process a bit more standardized and easy to read. 
+
+Let's take a look. 
+
+```{r}
+# Dependent variable is B/Bmsy
+dep_var <- "b_bmsy"
+
+# Model recipe B/Bmsy ~ independent variables
+ram_recipe_1 <- recipes::recipe(b_bmsy ~ ., data = ram_df %>% select(dep_var, candidate_variables))
+
+# Recipe with log B/Bmsy
+ram_recipe_2 <- ram_recipe_1 %>%
+  recipes::step_log(all_outcomes())
+```
+
+This is our start, out recipe is a model with 1 outcome and 13 predictors. 
+
+Now, before we manually added a variable called log_b to the data. There's not really a problem with that, but with recipes we can make all these choices part of one process
+
+Now suppose that we want to center and scale all of the life history and time related variables
+
+```{r}
+### Center and scale all life history and year terms for both models
+# Variables to adjust
+vars_to_scale <- c("loo","k","winfinity","tmax","tm","m","lm","temperature","years_back")
+
+# B/Bmsy model
+ram_recipe_1 <- ram_recipe_1 %>%
+recipes::step_center(vars_to_scale) %>%
+recipes::step_scale(vars_to_scale)
+
+# Log B/Bmsy model
+ram_recipe_2 <- ram_recipe_2 %>% 
+recipes::step_center(vars_to_scale) %>% 
+recipes::step_scale(vars_to_scale)
+```
+
+Now we need to prep our data to use the model receipes:
+
+Alright, so how do we use this?
+
+Our first step is to `prep` the recipe. During the `prep` step, the recipe calculates steps required by the `recipes` on the supplied data. In this case, it calculates the mean and the standard deviation of each of the columns for use in centering and scaling (but it doesn't do that step yet)
+
+
+```{r}
+# Prep ram data 1
+prepped_ram_1 <- recipes::prep(ram_recipe_1, training = ram_train)
+# prepped_ram_1
+```
+
+```{r}
+# Prep ram data 2
+prepped_ram_2 <- recipes::prep(ram_recipe_2, training = ram_train)
+# prepped_ram_2
+```
+
+```{r}
+# Get processed data with bake
+baked_ram_1 <- recipes::bake(prepped_ram_1, newdata = ram_test)
+# head(baked_ram_1)
+```
+
+```{r}
+# Get processed data with bake
+baked_ram_2 <- recipes::bake(prepped_ram_2, newdata = ram_test)
+# head(baked_ram_2)
+```
+
+
+```{r}
+# Specify training method parameters
+fit_control <- trainControl(
+  method = "repeatedcv",
+  number = 5,
+  repeats = 1,
+  allowParallel = TRUE
+)
+
+### Train the random forest model with both model specifications
+# B/Bmsy
+caret_forest <- caret::train(
+  prepped_ram_1,
+  data = ram_train,
+  method = "ranger",
+  trControl = fit_control
+)
+
+# Log B/Bmsy
+caret_forest_log <- caret::train(
+  prepped_ram_2,
+  data = ram_train,
+  method = "ranger",
+  trControl = fit_control
+)
+```
+
+## Results
+
+```{r}
+ram_predicts <- data_frame(
+  model = 'B',
+  obs   = baked_ram_1$b_bmsy,
+  preds = predict(caret_forest$finalModel, data = baked_ram_1 %>% 
+                    select(candidate_variables))$predictions) %>% 
+  bind_rows(data_frame(
+  model = 'log B',
+  obs   = baked_ram_2$b_bmsy,
+  preds = predict(caret_forest_log$finalModel, data = baked_ram_2 %>% 
+                    select(candidate_variables))$predictions
+  ))
+```
+
+
+```{r}
+ram_predicts %>%
+  # filter(model == 'log B') %>% 
+  ggplot(aes(x = obs, y = preds)) + 
+  geom_point(alpha = 0.6) + 
+  geom_abline(slope = 1, intercept = 0, color = 'red', linetype = 2) +
+  facet_wrap(~model, scales = 'free')
+
+```
+
+## Predicting Unassessed Fisheries
+
+### FAO Data
+
+Load the results from Costello et al. (2016) that have been prepared for the analysis with `prepare-fao.R`:
+
+```{r}
+# Load MSY Data from Costello et al.
+fao <- read_csv(file = '../processed_data/fao_data.csv')
+```
+
+Arrange by `stockid` and `year` and bake the data to use for making predictions with the non-logged RF model:
+
+```{r}
+# Select variables
+fao_rf <- fao %>% 
+  arrange(stockid, year) %>% 
+  filter(is.na(tcbest) == F) %>%
+  group_by(stockid) %>%
+  mutate(max_catch           = max(tcbest, na.rm = T),
+         years_back          = rev(1:length(tcbest)),
+         scaled_catch        = tcbest / max(tcbest, na.rm = T),
+         scaled_lag1         = lag(scaled_catch, n = 1),
+         scaled_lag2         = lag(scaled_catch, n = 2),
+         scaled_lag3         = lag(scaled_catch, n = 3),
+         scaled_lag4         = lag(scaled_catch, n = 4),
+         mean_scaled_catch   = mean(scaled_catch, na.rm = T),
+         rolling_catch_ratio = tcbest / cummax(tcbest),
+         yrs_to_max_catch    = year[match(max_catch, tcbest)] - min(year, na.rm = T)) %>%
+    ungroup()
+  
+# Calculate scaled catch window to include in regression
+catch_slope_fao <- fao_rf %>%
+  split(.$stockid) %>%
+  map_df(~ lm(scaled_catch[1:6] ~  slope_window, na.action='na.omit', data = . )$coefficients['slope_window']) %>%
+  gather() %>%
+  rename(stockid = key,
+         initial_scaled_catch_slope = value)
+  
+# Join catch slope data with RAM
+fao_rf <- left_join(fao_rf, catch_slope_fao)
+
+fao_rf <- fao_rf %>% 
+  select(stockid, scientificname, year, region, b, tcbest, candidate_variables) %>% 
+  ungroup() %>% 
+  na.omit()
+  
+# Bake data set using ram_recipe
+baked_fao <- recipes::bake(prepped_ram_1, newdata = fao_rf)
+```
+
+Now that we have our baked FAO data we're ready to assign predictions using the RF model and compare them to the predictions from Costello et al. (2016):
+
+```{r}
+results <- fao_rf %>% 
+  mutate(b_rf = predict(caret_forest$finalModel, data = baked_fao %>% 
+                    select(candidate_variables))$predictions)
+```
+
+## Results
+
+```{r}
+results %>%
+  filter(year == 2012) %>% 
+  ggplot(aes(x = b, y = b_rf)) +
+  geom_point(alpha = 0.6) +
+  geom_abline(intercept = 0, slope = 1, linetype = 2, color = 'red') +
+  coord_cartesian(xlim = c(0,3),
+                  ylim = c(0,3)) +
+  labs(title = "2012",
+       x = "B/Bmsy Costello et al. (2016)",
+       y = "B/Bmsy Random Forest")
+
+# ggsave(filename = "../figures/b_comparison_scatter.png", width = 5, height = 4)
+```
+
+```{r}
+results %>% 
+  filter(year == 2012) %>% 
+  select(b, b_rf) %>% 
+  gather(key = 'pred', value = 'value') %>% 
+  ggplot(aes(x = value, fill = pred)) +
+  geom_histogram(position = 'dodge') +
+  scale_fill_brewer(palette = 'Dark2') +
+  labs(title = "2012 B/Bmsy",
+       fill  = "Model")
+
+# ggsave(filename = "../figures/b_comparison_hist.png", width = 5, height = 4)
+```
+
+```{r}
+stock_check <- sample(results$stockid, size = 20)
+
+results %>% 
+  filter(stockid %in% stock_check) %>% 
+  group_by(stockid) %>%
+  mutate(sd = sd(b_rf)) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = year, y = b_rf, group = stockid, color = sd)) +
+  geom_line(alpha = 0.5)
+```
+

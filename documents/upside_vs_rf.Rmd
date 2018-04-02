@@ -1,0 +1,368 @@
+---
+title: "Upside Model vs Machine Learning"
+author: "Tyler Clavelle"
+date: "3/27/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+set.seed(43)
+
+knitr::opts_chunk$set(
+echo = T,
+message = F,
+warning = F,
+cache = FALSE
+)
+library(recipes)
+library(rsample)
+library(caret)
+library(broom)
+library(tidyposterior)
+library(tidyverse)
+library(FishLife)
+library(GUM)
+
+# Figure Theme
+theme_set(theme_minimal(base_size = 14, base_family = "Arial"))
+```
+
+We're going to use RAM v4.25 (with model fits) for this exercise
+
+```{r, message = FALSE, warning=FALSE}
+ram <- read_csv(here::here("processed_data", "ram_data.csv")) # Most recent ram data 
+load(here::here("processed_data", "MsyData.rdata")) # Costello et al. Msy Data
+ram2 <- filter(MsyData, Dbase == 'RAM')
+```
+
+```{r}
+# Extract only stocks that were used in Costello et al. 2016
+stocks <- unique(ram$stockid) 
+stocks2 <- unique(ram2$IdOrig)
+# Lookup table of which ram stocks to extract
+stocks_to_use <- lapply(stocks, function(x) {
+  data_frame(stockid = x,
+             IdOrig  = stocks2[grepl(x, stocks2)],
+             include = any(grepl(x, stocks2)))
+}) %>% bind_rows()
+
+# Filter join the new ram data to only include stocks from Costello et al.
+ram_final <- stocks_to_use %>% 
+  filter(include == TRUE) %>% 
+  inner_join(ram) %>% 
+  left_join(ram2 %>% 
+              select(IdOrig, SpeciesCatName) %>% 
+              distinct())
+```
+
+
+To be consistent with @Costello2012, let's add in some lags to the catch data, and a few other goodies. Also, we're not going to tackle the problem of missing data today, but suffice to say that Kuhn & Johnson has a whole chapter to dealing with missing values which is a great tool for any kind of modeling. 
+
+```{r}
+## Create primary predictor variables
+ram_df <- ram_final %>%
+  filter(is.na(tcbest) == F) %>%
+  mutate(b_bmsy = pmin(6, bdivbmsypref)) %>% 
+  group_by(stockid) %>%
+  mutate(log_b               = log(b_bmsy),
+         max_catch           = max(tcbest, na.rm = T),
+         years_back          = rev(1:length(tcbest)),
+         scaled_catch        = tcbest / max(tcbest, na.rm = T),
+         scaled_lag1         = lag(scaled_catch, n = 1),
+         scaled_lag2         = lag(scaled_catch, n = 2),
+         scaled_lag3         = lag(scaled_catch, n = 3),
+         scaled_lag4         = lag(scaled_catch, n = 4),
+         mean_scaled_catch   = mean(scaled_catch, na.rm = T),
+         rolling_catch_ratio = tcbest / cummax(tcbest),
+         yrs_to_max_catch    = year[match(max_catch, tcbest)] - min(year)) %>%
+    ungroup()
+  
+# Calculate scaled catch window to include in regression
+slope_window <- 1:6 
+  
+catch_slope <- ram_df %>%
+  split(.$stockid) %>%
+  map_df(~ lm(scaled_catch[1:6] ~  slope_window, na.action='na.omit', data = . )$coefficients['slope_window']) %>%
+  gather() %>%
+  dplyr::rename(stockid = key,
+         initial_scaled_catch_slope = value)
+  
+# Join catch slope data with RAM
+ram_df <- left_join(ram_df, catch_slope)
+  
+# Candidate variables to use
+candidate_variables <-c("loo","k","winfinity","tmax","tm","m","lm","temperature", "max_catch","years_back",
+                          "tcbest","scaled_lag1","scaled_lag2","scaled_lag3","scaled_lag4",
+                        "mean_scaled_catch", "rolling_catch_ratio", "yrs_to_max_catch", "initial_scaled_catch_slope")
+
+# Filter RAM to year >= 1950 and select variables of interest
+ram_df <- ram_df %>% 
+  dplyr::select(b_bmsy,
+         log_b,
+         year,
+         region,
+         scientificname,
+         stockid,
+         SpeciesCatName,
+         candidate_variables) %>%
+  na.omit()
+```
+
+Next, we'll rank every RAM stock according to $\frac{B}{B_{MSY}}$ in order to evaluate the results of training our models on different groups of RAM stocks.
+
+```{r}
+# Create a training and testing dataset based on the best/worst status fisheries in RAM
+ram_status_ranks <- ram_df %>% 
+  group_by(stockid) %>% 
+  summarize(mean_b = mean(b_bmsy, na.rm = T),
+            mean_c = mean(tcbest, na.rm = T)) %>% 
+  ungroup() %>% 
+  mutate(rank_b = percent_rank(mean_b),
+         rank_c = percent_rank(mean_c))
+
+# Join ranks with RAM data
+ram_df <- left_join(ram_status_ranks, ram_df)
+```
+
+Define the model recipe to use for the random forest
+
+```{r}
+# Dependent variable is B/Bmsy
+dep_var <- "b_bmsy"
+
+# Model recipe B/Bmsy ~ independent variables
+ram_recipe_1 <- recipes::recipe(b_bmsy ~ ., data = ram_df %>% select(dep_var, candidate_variables))
+
+# Recipe with log B/Bmsy
+ram_recipe_2 <- ram_recipe_1 %>%
+  recipes::step_log(all_outcomes())
+
+# Center and scale all life history and year terms for both models
+# Variables to adjust
+vars_to_scale <- c("loo","k","winfinity","tmax","tm","m","lm","temperature","years_back")
+
+# B/Bmsy model
+ram_recipe_1 <- ram_recipe_1 %>%
+recipes::step_center(vars_to_scale) %>%
+recipes::step_scale(vars_to_scale)
+
+# Log B/Bmsy model
+ram_recipe_2 <- ram_recipe_2 %>% 
+recipes::step_center(vars_to_scale) %>% 
+recipes::step_scale(vars_to_scale)
+
+# Save recipes in dataframe
+recipe_df <- data_frame(recipe_name = c('b', 'log b'),
+                        recipe      = list(ram_recipe_1, ram_recipe_2))
+```
+
+Now let's create a dataframe with various combinations of split rules governing how we train and test the Costello et al. (2016) results and the results of a random forest model 
+
+```{r}
+# Build model data frame with training and testing data split based on catch percentages
+# Only consider RAM stocks with mean lifetime B/Bmsy below 3
+ram_df <- ram_df %>%
+  filter(mean_b < 3)
+
+# Build training/testing sets based on splitting the data by mean lifetime catch
+models <- expand.grid(train_perc  = c(0.2, 0.4, 0.6, 0.8),
+                      split_type  = 'status',
+                      recipe_name = c('b', 'log b')) %>%
+  left_join(recipe_df) %>%
+  group_by(recipe_name, train_perc) %>%
+  mutate(training = map(train_perc, .f = ~filter(ram_df, rank_c > .x)),
+         testing  = map(train_perc, .f = ~filter(ram_df, rank_c <= .x)))
+
+
+# Create a training/testing set based on a proportional split unrelated to status
+models_prop <- expand.grid(train_perc  = c(0.8),
+                           split_type  = 'random',
+                           recipe_name = c('b', 'log b')) %>%
+  left_join(recipe_df)
+
+ram_split <- rsample::initial_split(ram_df, 0.75)
+ram_testing <- rsample::testing(ram_split)
+ram_training <- rsample::training(ram_split)
+
+models_prop$training <- list(ram_training)
+models_prop$testing <- list(ram_testing)
+
+# Bind the two training types together
+models <- bind_rows(models, models_prop)
+```
+
+Specify training method parameters
+
+```{r}
+fit_control <- trainControl(
+  method = "repeatedcv",
+  number = 5,
+  repeats = 1,
+  allowParallel = FALSE
+)
+```
+
+Train the machine learning models with the different training data sets
+
+```{r}
+# Random Forest
+fit_models <- models %>% 
+  ungroup() %>% 
+  filter(recipe_name == 'b') %>% 
+  mutate(recipe_prep = map2(recipe, training, ~prep(.x, training = .y)), # prep the recipe with the training data
+         testing     = map2(recipe_prep, testing, ~bake(.x, newdata = .y)), # bake the testing data
+         trained_rf  = map2(recipe, training, ~caret::train(.x, data = .y, 
+                                                                 method = "ranger",
+                                                                 trControl = fit_control))) # train the various models
+
+# Gradient Boosted 
+fit_models_gbm <- models %>% 
+  ungroup() %>% 
+  filter(recipe_name == 'b') %>% 
+  mutate(recipe_prep = map2(recipe, training, ~prep(.x, training = .y)), # prep the recipe with the training data
+         testing     = map2(recipe_prep, testing, ~bake(.x, newdata = .y)), # bake the testing data
+         trained_gbm  = map2(recipe, training, ~caret::train(.x, 
+                                                            data = .y, 
+                                                            method = "gbm",
+                                                            trControl = fit_control,
+                                                            verbose = FALSE))) # train the various models
+```
+
+Now that we have our trained models, let's make predictions
+
+```{r}
+# RF predictions
+rf_preds <- fit_models %>% 
+  mutate(testing = map2(trained_rf, testing, ~.y %>% 
+                                                  mutate(pred = predict(.x$finalModel, data = .y %>% 
+                                                  select(candidate_variables))$predictions)),
+         training = map2(recipe_prep, training, ~bake(.x, newdata = .y)), # bake the training data
+         training = map2(trained_rf, training, ~.y %>% 
+                                                  mutate(pred = predict(.x$finalModel, data = .y %>% 
+                                                  select(candidate_variables))$predictions)))
+
+# Function to extract GBM predictions
+get_gbm_preds <- function(x) {
+  # Get predictions  
+  pred = predict(fit_models_gbm$trained_gbm[[1]]$finalModel, as.data.frame(x),
+                 n.trees = fit_models_gbm$trained_gbm[[1]]$bestTune$n.trees)
+  # Add to dataset
+  x <- mutate(x, pred = pred)
+  return(x)
+}  
+
+# Extract GBM predictions
+gbm_preds <- fit_models_gbm %>% 
+  mutate(pred = map(testing, get_gbm_preds)) %>% 
+  select(train_perc, split_type, recipe_name, pred) %>% 
+  unnest() 
+
+# Join prediction datasets
+all_preds <- rf_preds %>% 
+  select(train_perc, split_type, recipe_name, testing) %>%
+  unnest() %>% 
+  mutate(model = 'RF') #%>% 
+  # bind_rows(gbm_preds %>% 
+  #             mutate(model = 'GBM')) %>% 
+  # filter(recipe_name == 'b') # just use regular B/Bmsy model for now
+```
+
+
+## Results
+
+
+```{r}
+all_preds %>% 
+  filter(split_type == 'status') %>% 
+  ggplot() +
+  geom_point(aes(x = b_bmsy, y = pred), alpha = 0.3) + 
+  geom_abline(intercept = 0, slope = 1, linetype = 2, color = 'red') +
+  facet_grid(model~train_perc) + 
+  labs(title = 'Out of sample B/Bmsy predictions for RF and GBM models',
+       subtitle = 'Trained on RAM data according to mean catch percentile (facet headers)',
+       x = 'Observed',
+       y = 'Predicted')
+```
+
+```{r}
+all_preds %>% 
+  filter(split_type == 'random') %>% 
+  ggplot() +
+  geom_point(aes(x = b_bmsy, y = pred), alpha = 0.3) + 
+  geom_abline(intercept = 0, slope = 1, linetype = 2, color = 'red') +
+  facet_grid(model~train_perc) + 
+  labs(title = 'Out of sample B/Bmsy predictions for RF and GBM models',
+       subtitle = 'Trained on random training/testing split of RAM data',
+       x = 'Observed',
+       y = 'Predicted')
+```
+
+## PRM/Catch-MSY
+
+Now we need to compare the random forest predictions to the predictions resulting from the Costello et al. method
+
+```{r}
+# Read in results of GUM model
+ram_gum <- read_csv(file = '../processed_data/ram_gum_results.csv')
+```
+
+```{r}
+### Combine predictions from two models
+compare_df_random <- all_preds %>% 
+  filter(split_type == 'random') %>% 
+  select(model, train_perc, b_bmsy, pred) %>% 
+  bind_rows(ram_gum %>%
+              filter(year >= 1950) %>% 
+              select(bdivbmsypref, BvBmsy) %>% 
+              dplyr::rename(b_bmsy = bdivbmsypref,
+                     pred   = BvBmsy) %>% 
+              mutate(model = 'Costello',
+                     train_perc = list(unique(all_preds$train_perc[all_preds$split_type == 'random']))) %>% 
+              unnest())
+
+# Status split models
+compare_df_status <- all_preds %>% 
+  filter(split_type == 'status') %>% 
+  select(model, train_perc, b_bmsy, pred) %>% 
+  bind_rows(ram_gum %>%
+              filter(year >= 1950) %>% 
+              select(bdivbmsypref, BvBmsy) %>% 
+              dplyr::rename(b_bmsy = bdivbmsypref,
+                     pred   = BvBmsy) %>% 
+              mutate(model = 'Costello',
+                     train_perc = list(unique(all_preds$train_perc[all_preds$split_type == 'status']))) %>% 
+              unnest())
+```
+
+
+```{r}
+compare_df_random %>% 
+  ggplot(aes(x = b_bmsy, y = pred)) +
+  geom_point(alpha = 0.3) +
+  coord_cartesian(xlim = c(0,5),
+                  ylim = c(0,5)) + 
+  geom_abline(intercept = 0, slope = 1, color = 'red', linetype = 2) +
+  facet_wrap(~model) +
+  labs(x = 'Observed',
+       y = 'Predicted',
+       title = 'B/Bmsy')
+
+ggsave(filename = "../figures/b_predict_compare.png", width = 6, height = 4)
+```
+
+```{r}
+compare_df_status %>% 
+  filter(model == 'RF') %>% 
+  ggplot(aes(x = b_bmsy, y = pred)) +
+  geom_point(alpha = 0.3) +
+  coord_cartesian(xlim = c(0,5),
+                  ylim = c(0,5)) + 
+  geom_abline(intercept = 0, slope = 1, color = 'red', linetype = 2) +
+  facet_grid(model~train_perc) +
+  labs(x = 'Observed',
+       y = 'Predicted',
+       title = 'B/Bmsy',
+       subtitle = 'Trained on RAM data according to mean catch percentile\n(facet headers are catch percentile of test set)')
+
+ggsave(filename = "../figures/b_predict_compare.png", width = 6, height = 4)
+```
